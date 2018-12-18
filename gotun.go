@@ -22,13 +22,15 @@ var (
 )
 
 type bridge struct {
-	dev           io.ReadWriteCloser
-	mtu           int
-	ipFragments   map[uint16]*ipPacket
-	writes        chan interface{}
-	udpConns      map[fourtuple]*net.UDPConn
-	buffers       *bpool.BytePool
-	udpPacketPool *sync.Pool
+	dev              io.ReadWriteCloser
+	mtu              int
+	ipFragments      map[uint16]*ipPacket
+	writes           chan interface{}
+	buffers          *bpool.BytePool
+	udpPacketPool    *sync.Pool
+	tcpConnTrackMap  map[string]*tcpConnTrack
+	tcpConnTrackLock sync.Mutex
+	udpConns         map[fourtuple]*net.UDPConn
 }
 
 type fourtuple struct {
@@ -60,12 +62,13 @@ func Serve(dev io.ReadWriteCloser, opts *ServerOpts) error {
 		log.Debugf("Defaulted buffer pool depth to %v", opts.BufferPoolDepth)
 	}
 	br := &bridge{
-		dev:         dev,
-		mtu:         opts.MTU,
-		ipFragments: make(map[uint16]*ipPacket),
-		writes:      make(chan interface{}, opts.WriteBufferDepth),
-		udpConns:    make(map[fourtuple]*net.UDPConn),
-		buffers:     bpool.NewBytePool(opts.BufferPoolDepth, opts.MTU),
+		dev:             dev,
+		mtu:             opts.MTU,
+		ipFragments:     make(map[uint16]*ipPacket),
+		writes:          make(chan interface{}, opts.WriteBufferDepth),
+		tcpConnTrackMap: make(map[string]*tcpConnTrack),
+		udpConns:        make(map[fourtuple]*net.UDPConn),
+		buffers:         bpool.NewBytePool(opts.BufferPoolDepth, opts.MTU),
 		udpPacketPool: &sync.Pool{
 			New: func() interface{} {
 				return &udpPacket{}
@@ -114,7 +117,7 @@ func (br *bridge) read() error {
 				log.Errorf("unable to parse TCP: %v", err)
 				continue
 			}
-			// t2s.tcp(data, &ip, &tcp)
+			br.onTCPPacket(data, &ip, &tcp)
 
 		case packet.IPProtocolUDP:
 			err = packet.ParseUDP(ip.Payload, &udp)
@@ -134,6 +137,13 @@ func (br *bridge) read() error {
 func (br *bridge) write() {
 	for pkt := range br.writes {
 		switch p := pkt.(type) {
+		case *tcpPacket:
+			_, err := br.dev.Write(p.wire)
+			br.releaseTCPPacket(p)
+			if err != nil {
+				log.Errorf("Error on writing TCP to tun device: %v", err)
+				return
+			}
 		case *udpPacket:
 			_, err := br.dev.Write(p.wire)
 			br.releaseUDPPacket(p)
