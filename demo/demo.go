@@ -3,13 +3,9 @@ package main
 import (
 	"flag"
 	"fmt"
-	"net"
 
-	"github.com/davecgh/go-spew/spew"
 	"github.com/getlantern/golog"
 	"github.com/getlantern/gotun"
-	"github.com/google/gopacket"
-	"github.com/google/gopacket/layers"
 )
 
 var (
@@ -40,94 +36,5 @@ func main() {
 	}
 	defer dev.Close()
 
-	var ip4 layers.IPv4
-	var tcp layers.TCP
-	var udp layers.UDP
-	parser := gopacket.NewDecodingLayerParser(layers.LayerTypeIPv4, &ip4, &tcp, &udp)
-	decoded := []gopacket.LayerType{}
-	udpConns := make(map[fivetuple]*net.UDPConn)
-
-	for {
-		b := make([]byte, 2048)
-		n, err := dev.Read(b)
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		go func() {
-			var connID fivetuple
-			var payload []byte
-
-			parser.DecodeLayers(b[:n], &decoded)
-			for _, layerType := range decoded {
-				switch layerType {
-				case layers.LayerTypeIPv4:
-					log.Debug(spew.Sdump(ip4))
-					connID.srcIP, connID.dstIP = ip4.SrcIP.String(), ip4.DstIP.String()
-				case layers.LayerTypeTCP:
-					connID.proto, connID.srcPort, connID.dstPort = "tcp", int(tcp.SrcPort), int(tcp.DstPort)
-					payload = tcp.Payload
-				case layers.LayerTypeUDP:
-					log.Debug(spew.Sdump(udp))
-					connID.proto, connID.srcPort, connID.dstPort = "udp", int(udp.SrcPort), int(udp.DstPort)
-					payload = udp.Payload
-				}
-			}
-
-			// Cheat and change dst ip to 67.205.172.79 for testing
-			connID.dstIP = "67.205.172.79"
-			if connID.proto == "udp" {
-				conn := udpConns[connID]
-				if conn == nil {
-					remoteAddr := &net.UDPAddr{IP: net.ParseIP(connID.dstIP), Port: connID.dstPort}
-					conn, err = net.DialUDP("udp", nil, remoteAddr)
-					if err != nil {
-						log.Errorf("Unable to dial upstream UDP connection for %v: %v", connID, err)
-						return
-					}
-					udpConns[connID] = conn
-					go func() {
-						buf := gopacket.NewSerializeBuffer()
-						opts := gopacket.SerializeOptions{}
-						rb := make([]byte, 10000)
-						for {
-							n, dstAddr, err := conn.ReadFromUDP(rb)
-							if err != nil {
-								log.Errorf("Error reading from remote end of UDP connection for %v: %v", connID, err)
-								return
-							}
-							err = gopacket.SerializeLayers(buf, opts,
-								&layers.IPv4{
-									Version:  4,
-									TTL:      64,
-									Protocol: layers.IPProtocolUDP,
-									SrcIP:    net.ParseIP("10.0.0.1"), // cheating for now, should use dstAddr
-									DstIP:    net.ParseIP(connID.srcIP),
-								},
-								&layers.UDP{
-									SrcPort: layers.UDPPort(dstAddr.Port),
-									DstPort: layers.UDPPort(connID.srcPort),
-								},
-								gopacket.Payload(rb[:n]))
-							if err != nil {
-								log.Errorf("Error serializing response from remote end of UDP connection for %v: %v", connID, err)
-								return
-							}
-							log.Debug(string(buf.Bytes()))
-							_, err = dev.Write(buf.Bytes())
-							if err != nil {
-								log.Errorf("Error writing response from remote end of UDP connection for %v: %v", connID, err)
-								return
-							}
-						}
-					}()
-				}
-				log.Debugf("Writing payload %v for %v", string(payload), connID)
-				_, err := conn.Write(payload)
-				if err != nil {
-					log.Errorf("Error writing to upstream UDP connection for %v: %v", connID, err)
-				}
-			}
-		}()
-	}
+	tun.Serve(dev, &tun.ServerOpts{})
 }

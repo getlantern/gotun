@@ -179,9 +179,9 @@ func OpenTunDevice(name, addr, gw, mask string, dns []string) (io.ReadWriteClose
 	}
 	// set addresses with dhcp
 	var returnLen uint32
-	tunAddr := net.ParseIP(addr).To4()
-	tunMask := net.ParseIP(mask).To4()
-	gwAddr := net.ParseIP(gw).To4()
+	tunAddr := parseIPv4(addr)
+	tunMask := parseIPv4(mask)
+	gwAddr := parseIPv4(gw)
 	addrParam := append(tunAddr, tunMask...)
 	addrParam = append(addrParam, gwAddr...)
 	lease := make([]byte, 4)
@@ -206,10 +206,10 @@ func OpenTunDevice(name, addr, gw, mask string, dns []string) (io.ReadWriteClose
 
 	// set dns with dncp
 	dnsParam := []byte{6, 4}
-	primaryDNS := net.ParseIP(dns[0]).To4()
+	primaryDNS := parseIPv4(dns[0])
 	dnsParam = append(dnsParam, primaryDNS...)
 	if len(dns) >= 2 {
-		secondaryDNS := net.ParseIP(dns[1]).To4()
+		secondaryDNS := parseIPv4(dns[1])
 		dnsParam = append(dnsParam, secondaryDNS...)
 		dnsParam[1] += 4
 	}
@@ -278,9 +278,9 @@ func newWinTapDev(fd windows.Handle, addr string, gw string) *winTapDev {
 		wInitiated:  false,
 
 		addr:   addr,
-		addrIP: net.ParseIP(addr).To4(),
+		addrIP: parseIPv4(addr),
 		gw:     gw,
-		gwIP:   net.ParseIP(gw).To4(),
+		gwIP:   parseIPv4(gw),
 	}
 	return dev
 }

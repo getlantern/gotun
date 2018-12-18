@@ -21,11 +21,11 @@ func NewTunDev(file *os.File, addr string, gw string) io.ReadWriteCloser {
 	}
 	if addr != "" {
 		dev.addr = addr
-		dev.addrIP = net.ParseIP(addr).To4()
+		dev.addrIP = parseIPv4(addr)
 	}
 	if gw != "" {
 		dev.gw = gw
-		dev.gwIP = net.ParseIP(gw).To4()
+		dev.gwIP = parseIPv4(gw)
 	}
 	return dev
 }
