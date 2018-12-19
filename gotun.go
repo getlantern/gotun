@@ -39,6 +39,7 @@ type bridge struct {
 	tcpConnTrackMx sync.Mutex
 	udpConnTrack   map[fourtuple]*udpConnTrack
 	udpConnTrackMx sync.Mutex
+	stopCh         chan bool
 }
 
 type fourtuple struct {
@@ -105,6 +106,7 @@ func Serve(dev io.ReadWriteCloser, opts *ServerOpts) error {
 				return &udpPacket{}
 			},
 		},
+		stopCh: make(chan bool),
 	}
 
 	go br.write()
@@ -113,6 +115,10 @@ func Serve(dev io.ReadWriteCloser, opts *ServerOpts) error {
 }
 
 func (br *bridge) read() error {
+	defer func() {
+		close(br.stopCh)
+	}()
+
 	var ip packet.IPv4
 	var tcp packet.TCP
 	var udp packet.UDP
@@ -165,28 +171,33 @@ func (br *bridge) read() error {
 }
 
 func (br *bridge) write() {
-	for pkt := range br.writes {
-		switch p := pkt.(type) {
-		case *tcpPacket:
-			_, err := br.dev.Write(p.wire)
-			br.releaseTCPPacket(p)
-			if err != nil {
-				log.Errorf("Error on writing TCP to tun device: %v", err)
-				return
-			}
-		case *udpPacket:
-			_, err := br.dev.Write(p.wire)
-			br.releaseUDPPacket(p)
-			if err != nil {
-				log.Errorf("Error on writing UDP to tun device: %v", err)
-				return
-			}
-		case *ipPacket:
-			_, err := br.dev.Write(p.wire)
-			br.releaseIPPacket(p)
-			if err != nil {
-				log.Errorf("Error on writing IP to tun device: %v", err)
-				return
+	for {
+		select {
+		case <-br.stopCh:
+			return
+		case pkt := <-br.writes:
+			switch p := pkt.(type) {
+			case *tcpPacket:
+				_, err := br.dev.Write(p.wire)
+				br.releaseTCPPacket(p)
+				if err != nil {
+					log.Errorf("Error on writing TCP to tun device: %v", err)
+					return
+				}
+			case *udpPacket:
+				_, err := br.dev.Write(p.wire)
+				br.releaseUDPPacket(p)
+				if err != nil {
+					log.Errorf("Error on writing UDP to tun device: %v", err)
+					return
+				}
+			case *ipPacket:
+				_, err := br.dev.Write(p.wire)
+				br.releaseIPPacket(p)
+				if err != nil {
+					log.Errorf("Error on writing IP to tun device: %v", err)
+					return
+				}
 			}
 		}
 	}
