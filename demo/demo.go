@@ -80,7 +80,6 @@ func main() {
 			if err != nil {
 				return nil, err
 			}
-			// TODO: respect deadline in context
 			return net.DialTCP(network, laddrTCP, raddr)
 		},
 		DialUDP: func(ctx context.Context, network, addr string) (*net.UDPConn, error) {

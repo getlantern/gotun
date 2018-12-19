@@ -91,7 +91,8 @@ func (br *bridge) newUDPConn(connID fourtuple) (*udpConnTrack, error) {
 	br.udpConnTrack[connID] = ct
 	br.udpConnTrackMx.Unlock()
 	go func() {
-		rb := make([]byte, br.mtu) // TODO: pool these
+		rb := br.newBuffer()
+		defer br.releaseBuffer(rb)
 		for {
 			ct.SetDeadline(time.Now().Add(br.idleTimeout))
 			n, err := ct.Read(rb)

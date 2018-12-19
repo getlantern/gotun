@@ -118,11 +118,9 @@ func (br *bridge) read() error {
 	var udp packet.UDP
 
 	for {
-		// TODO: use pool for buffers
 		buf := make([]byte, br.mtu)
 		n, err := br.dev.Read(buf)
 		if err != nil {
-			// TODO: stop at critical error
 			return log.Errorf("error reading packet: %v", err)
 		}
 		data := buf[:n]
