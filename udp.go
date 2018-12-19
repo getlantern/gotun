@@ -53,7 +53,7 @@ func (br *bridge) newUDPConn(connID fourtuple) (net.Conn, error) {
 	go func() {
 		rb := make([]byte, br.mtu) // TODO: pool these
 		for {
-			n, responseAddr, err := conn.ReadFromUDP(rb)
+			n, _, err := conn.ReadFromUDP(rb)
 			if err != nil {
 				log.Errorf("Error reading from remote end of UDP connection for %v: %v", connID, err)
 				br.udpConnsMx.Lock()
@@ -61,7 +61,7 @@ func (br *bridge) newUDPConn(connID fourtuple) (net.Conn, error) {
 				br.udpConnsMx.Unlock()
 				return
 			}
-			pkt, fragments := br.responsePacket(parseIPv4(connID.localIP), responseAddr.IP, connID.localPort, uint16(responseAddr.Port), rb[:n])
+			pkt, fragments := br.responsePacket(parseIPv4(connID.localIP), parseIPv4(connID.remoteIP), connID.localPort, connID.remotePort, rb[:n])
 			br.writes <- pkt
 			for _, fragment := range fragments {
 				br.writes <- fragment
