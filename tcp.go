@@ -742,8 +742,8 @@ func (tt *tcpConnTrack) run() {
 }
 
 func (br *bridge) createTCPConnTrack(id string, ip *packet.IPv4, tcp *packet.TCP) *tcpConnTrack {
-	br.tcpConnTrackLock.Lock()
-	defer br.tcpConnTrackLock.Unlock()
+	br.tcpConnTrackMx.Lock()
+	defer br.tcpConnTrackMx.Unlock()
 
 	track := &tcpConnTrack{
 		br:            br,
@@ -768,25 +768,23 @@ func (br *bridge) createTCPConnTrack(id string, ip *packet.IPv4, tcp *packet.TCP
 	track.remoteIP = make(net.IP, len(ip.DstIP))
 	copy(track.remoteIP, ip.DstIP)
 
-	br.tcpConnTrackMap[id] = track
+	br.tcpConnTrack[id] = track
 	go track.run()
-	log.Debugf("tracking %d TCP connections", len(br.tcpConnTrackMap))
 	return track
 }
 
 func (br *bridge) getTCPConnTrack(id string) *tcpConnTrack {
-	br.tcpConnTrackLock.Lock()
-	defer br.tcpConnTrackLock.Unlock()
+	br.tcpConnTrackMx.Lock()
+	defer br.tcpConnTrackMx.Unlock()
 
-	return br.tcpConnTrackMap[id]
+	return br.tcpConnTrack[id]
 }
 
 func (br *bridge) clearTCPConnTrack(id string) {
-	br.tcpConnTrackLock.Lock()
-	defer br.tcpConnTrackLock.Unlock()
+	br.tcpConnTrackMx.Lock()
+	defer br.tcpConnTrackMx.Unlock()
 
-	delete(br.tcpConnTrackMap, id)
-	log.Debugf("tracking %d TCP connections", len(br.tcpConnTrackMap))
+	delete(br.tcpConnTrack, id)
 }
 
 func (br *bridge) onTCPPacket(raw []byte, ip *packet.IPv4, tcp *packet.TCP) {

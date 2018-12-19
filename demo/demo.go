@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"net"
+	"time"
 
 	"github.com/getlantern/golog"
 	"github.com/getlantern/gotun"
@@ -67,7 +68,13 @@ func main() {
 	log.Debugf("Outbound TCP will use %v", laddrTCP)
 	log.Debugf("Outbound UDP will use %v", laddrUDP)
 
+	go func() {
+		time.Sleep(1 * time.Minute)
+		dev.Close()
+	}()
+
 	tun.Serve(dev, &tun.ServerOpts{
+		IdleTimeout: 5 * time.Second,
 		DialTCP: func(ctx context.Context, network, addr string) (net.Conn, error) {
 			raddr, err := netx.Resolve(network, addr)
 			if err != nil {

@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"sync"
+	"time"
 
 	"github.com/getlantern/golog"
 	"github.com/getlantern/gotun/packet"
@@ -17,6 +18,7 @@ const (
 	defaultMTU              = 1500
 	defaultWriteBufferDepth = 10000
 	defaultBufferPoolDepth  = 1000
+	defaultIdleTimeout      = 5 * time.Minute
 )
 
 var (
@@ -24,18 +26,19 @@ var (
 )
 
 type bridge struct {
-	dev              io.ReadWriteCloser
-	dialTCP          func(ctx context.Context, network, addr string) (net.Conn, error)
-	dialUDP          func(ctx context.Context, network, addr string) (*net.UDPConn, error)
-	mtu              int
-	ipFragments      map[uint16]*ipPacket
-	writes           chan interface{}
-	buffers          *bpool.BytePool
-	udpPacketPool    *sync.Pool
-	tcpConnTrackMap  map[string]*tcpConnTrack
-	tcpConnTrackLock sync.Mutex
-	udpConns         map[fourtuple]net.Conn
-	udpConnsMx       sync.Mutex
+	dev            io.ReadWriteCloser
+	dialTCP        func(ctx context.Context, network, addr string) (net.Conn, error)
+	dialUDP        func(ctx context.Context, network, addr string) (*net.UDPConn, error)
+	mtu            int
+	idleTimeout    time.Duration
+	ipFragments    map[uint16]*ipPacket
+	writes         chan interface{}
+	buffers        *bpool.BytePool
+	udpPacketPool  *sync.Pool
+	tcpConnTrack   map[string]*tcpConnTrack
+	tcpConnTrackMx sync.Mutex
+	udpConnTrack   map[fourtuple]*udpConnTrack
+	udpConnTrackMx sync.Mutex
 }
 
 type fourtuple struct {
@@ -51,6 +54,7 @@ type ServerOpts struct {
 	MTU              int
 	WriteBufferDepth int
 	BufferPoolDepth  int
+	IdleTimeout      time.Duration
 	DialTCP          func(ctx context.Context, network, addr string) (net.Conn, error)
 	DialUDP          func(ctx context.Context, network, addr string) (*net.UDPConn, error)
 }
@@ -68,6 +72,9 @@ func Serve(dev io.ReadWriteCloser, opts *ServerOpts) error {
 		opts.BufferPoolDepth = defaultBufferPoolDepth
 		log.Debugf("Defaulting buffer pool depth to %v", opts.BufferPoolDepth)
 	}
+	if opts.IdleTimeout <= 0 {
+		opts.IdleTimeout = defaultIdleTimeout
+	}
 	if opts.DialTCP == nil {
 		opts.DialTCP = netx.DialContext
 		log.Debug("Defaulted tcp dial function")
@@ -83,15 +90,16 @@ func Serve(dev io.ReadWriteCloser, opts *ServerOpts) error {
 		log.Debug("Defaulting udp dial function")
 	}
 	br := &bridge{
-		dev:             dev,
-		dialTCP:         opts.DialTCP,
-		dialUDP:         opts.DialUDP,
-		mtu:             opts.MTU,
-		ipFragments:     make(map[uint16]*ipPacket),
-		writes:          make(chan interface{}, opts.WriteBufferDepth),
-		tcpConnTrackMap: make(map[string]*tcpConnTrack),
-		udpConns:        make(map[fourtuple]net.Conn),
-		buffers:         bpool.NewBytePool(opts.BufferPoolDepth, opts.MTU),
+		dev:          dev,
+		dialTCP:      opts.DialTCP,
+		dialUDP:      opts.DialUDP,
+		mtu:          opts.MTU,
+		idleTimeout:  opts.IdleTimeout,
+		ipFragments:  make(map[uint16]*ipPacket),
+		writes:       make(chan interface{}, opts.WriteBufferDepth),
+		tcpConnTrack: make(map[string]*tcpConnTrack),
+		udpConnTrack: make(map[fourtuple]*udpConnTrack),
+		buffers:      bpool.NewBytePool(opts.BufferPoolDepth, opts.MTU),
 		udpPacketPool: &sync.Pool{
 			New: func() interface{} {
 				return &udpPacket{}
@@ -100,6 +108,7 @@ func Serve(dev io.ReadWriteCloser, opts *ServerOpts) error {
 	}
 
 	go br.write()
+	go br.trackStats()
 	return br.read()
 }
 

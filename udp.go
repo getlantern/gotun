@@ -3,9 +3,12 @@ package tun
 import (
 	"context"
 	"net"
+	"sync"
+	"time"
 
 	"github.com/getlantern/errors"
 	"github.com/getlantern/gotun/packet"
+	"github.com/getlantern/netx"
 )
 
 type udpPacket struct {
@@ -13,6 +16,42 @@ type udpPacket struct {
 	udp    *packet.UDP
 	mtuBuf []byte
 	wire   []byte
+}
+
+type udpConnTrack struct {
+	net.Conn
+	lastActivity   time.Time
+	lastActivityMx sync.RWMutex
+}
+
+func (ct *udpConnTrack) Write(b []byte) (int, error) {
+	n, err := ct.Conn.Write(b)
+	if err == nil {
+		ct.markActive()
+	}
+	return n, err
+}
+
+func (ct *udpConnTrack) Read(b []byte) (int, error) {
+	n, err := ct.Conn.Read(b)
+	if err == nil {
+		ct.markActive()
+	}
+	return n, err
+}
+
+func (ct *udpConnTrack) markActive() {
+	now := time.Now()
+	ct.lastActivityMx.Lock()
+	ct.lastActivity = now
+	ct.lastActivityMx.Unlock()
+}
+
+func (ct *udpConnTrack) timeSinceLastActive() time.Duration {
+	ct.lastActivityMx.RLock()
+	lastActivity := ct.lastActivity
+	ct.lastActivityMx.RUnlock()
+	return time.Since(lastActivity)
 }
 
 func (br *bridge) onUDPPacket(ip *packet.IPv4, udp *packet.UDP) {
@@ -23,52 +62,62 @@ func (br *bridge) onUDPPacket(ip *packet.IPv4, udp *packet.UDP) {
 		remotePort: udp.DstPort,
 	}
 
-	br.udpConnsMx.Lock()
-	conn := br.udpConns[connID]
+	br.udpConnTrackMx.Lock()
+	ct := br.udpConnTrack[connID]
 	var err error
-	if conn != nil {
-		br.udpConnsMx.Unlock()
+	if ct != nil {
+		br.udpConnTrackMx.Unlock()
 	} else {
-		conn, err = br.newUDPConn(connID)
+		ct, err = br.newUDPConn(connID)
 		if err != nil {
 			log.Error(err)
 			return
 		}
 	}
-	_, err = conn.Write(udp.Payload)
+	_, err = ct.Write(udp.Payload)
 	if err != nil {
 		log.Errorf("Error writing to upstream UDP connection for %v: %v", connID, err)
 	}
 }
 
-func (br *bridge) newUDPConn(connID fourtuple) (net.Conn, error) {
+func (br *bridge) newUDPConn(connID fourtuple) (*udpConnTrack, error) {
 	remoteAddr := &net.UDPAddr{IP: parseIPv4(connID.remoteIP), Port: int(connID.remotePort)}
 	conn, err := br.dialUDP(context.Background(), "udp", remoteAddr.String())
 	if err != nil {
-		br.udpConnsMx.Unlock()
+		br.udpConnTrackMx.Unlock()
 		return nil, errors.New("Unable to dial upstream UDP connection for %v: %v", connID, err)
 	}
-	br.udpConns[connID] = conn
-	br.udpConnsMx.Unlock()
+	ct := &udpConnTrack{Conn: conn}
+	br.udpConnTrack[connID] = ct
+	br.udpConnTrackMx.Unlock()
 	go func() {
 		rb := make([]byte, br.mtu) // TODO: pool these
 		for {
-			n, _, err := conn.ReadFromUDP(rb)
-			if err != nil {
-				log.Errorf("Error reading from remote end of UDP connection for %v: %v", connID, err)
-				br.udpConnsMx.Lock()
-				delete(br.udpConns, connID)
-				br.udpConnsMx.Unlock()
+			ct.SetDeadline(time.Now().Add(br.idleTimeout))
+			n, err := ct.Read(rb)
+			isIdleTimeout := err != nil && netx.IsTimeout(err)
+			shouldContinue := err == nil || (isIdleTimeout && ct.timeSinceLastActive() < br.idleTimeout)
+			if !shouldContinue {
+				if isIdleTimeout {
+					log.Debugf("UDP connection to %v idled", remoteAddr)
+				} else {
+					log.Errorf("Error reading from remote end of UDP connection for %v: %v", connID, err)
+				}
+				br.udpConnTrackMx.Lock()
+				delete(br.udpConnTrack, connID)
+				br.udpConnTrackMx.Unlock()
 				return
 			}
-			pkt, fragments := br.responsePacket(parseIPv4(connID.localIP), parseIPv4(connID.remoteIP), connID.localPort, connID.remotePort, rb[:n])
-			br.writes <- pkt
-			for _, fragment := range fragments {
-				br.writes <- fragment
+			if n > 0 {
+				pkt, fragments := br.responsePacket(parseIPv4(connID.localIP), parseIPv4(connID.remoteIP), connID.localPort, connID.remotePort, rb[:n])
+				br.writes <- pkt
+				for _, fragment := range fragments {
+					br.writes <- fragment
+				}
 			}
 		}
 	}()
-	return conn, nil
+	return ct, nil
 }
 
 func (br *bridge) responsePacket(local net.IP, remote net.IP, lPort uint16, rPort uint16, respPayload []byte) (*udpPacket, []*ipPacket) {
