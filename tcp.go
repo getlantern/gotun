@@ -3,6 +3,7 @@ package tun
 import (
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"strings"
 	"sync"
@@ -474,7 +475,9 @@ func (tt *tcpConnTrack) copyToRemote(dstIP net.IP, dstPort uint16, conn net.Conn
 
 		n, e := conn.Read(buf[:cur])
 		if e != nil {
-			log.Errorf("error reading from remote: %v", e)
+			if e != io.EOF {
+				log.Errorf("error reading from remote: %v", e)
+			}
 			conn.Close()
 			break
 		} else {

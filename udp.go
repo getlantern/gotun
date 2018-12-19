@@ -91,6 +91,13 @@ func (br *bridge) newUDPConn(connID fourtuple) (*udpConnTrack, error) {
 	br.udpConnTrack[connID] = ct
 	br.udpConnTrackMx.Unlock()
 	go func() {
+		defer func() {
+			br.udpConnTrackMx.Lock()
+			delete(br.udpConnTrack, connID)
+			br.udpConnTrackMx.Unlock()
+			conn.Close()
+		}()
+
 		rb := br.newBuffer()
 		defer br.releaseBuffer(rb)
 		for {
@@ -104,9 +111,6 @@ func (br *bridge) newUDPConn(connID fourtuple) (*udpConnTrack, error) {
 				} else {
 					log.Errorf("Error reading from remote end of UDP connection for %v: %v", connID, err)
 				}
-				br.udpConnTrackMx.Lock()
-				delete(br.udpConnTrack, connID)
-				br.udpConnTrackMx.Unlock()
 				return
 			}
 			if n > 0 {
