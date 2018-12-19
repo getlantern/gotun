@@ -23,9 +23,12 @@ func (br *bridge) onUDPPacket(ip *packet.IPv4, udp *packet.UDP) {
 		remotePort: udp.DstPort,
 	}
 
+	br.udpConnsMx.Lock()
 	conn := br.udpConns[connID]
 	var err error
-	if conn == nil {
+	if conn != nil {
+		br.udpConnsMx.Unlock()
+	} else {
 		conn, err = br.newUDPConn(connID)
 		if err != nil {
 			log.Error(err)
@@ -42,15 +45,20 @@ func (br *bridge) newUDPConn(connID fourtuple) (net.Conn, error) {
 	remoteAddr := &net.UDPAddr{IP: parseIPv4(connID.remoteIP), Port: int(connID.remotePort)}
 	conn, err := br.dialUDP(context.Background(), "udp", remoteAddr.String())
 	if err != nil {
+		br.udpConnsMx.Unlock()
 		return nil, errors.New("Unable to dial upstream UDP connection for %v: %v", connID, err)
 	}
 	br.udpConns[connID] = conn
+	br.udpConnsMx.Unlock()
 	go func() {
 		rb := make([]byte, br.mtu) // TODO: pool these
 		for {
 			n, responseAddr, err := conn.ReadFromUDP(rb)
 			if err != nil {
 				log.Errorf("Error reading from remote end of UDP connection for %v: %v", connID, err)
+				br.udpConnsMx.Lock()
+				delete(br.udpConns, connID)
+				br.udpConnsMx.Unlock()
 				return
 			}
 			pkt, fragments := br.responsePacket(parseIPv4(connID.localIP), responseAddr.IP, connID.localPort, uint16(responseAddr.Port), rb[:n])

@@ -35,6 +35,7 @@ type bridge struct {
 	tcpConnTrackMap  map[string]*tcpConnTrack
 	tcpConnTrackLock sync.Mutex
 	udpConns         map[fourtuple]net.Conn
+	udpConnsMx       sync.Mutex
 }
 
 type fourtuple struct {

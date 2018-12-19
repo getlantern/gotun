@@ -411,7 +411,7 @@ func (tt *tcpConnTrack) stateClosed(syn *tcpPacket) (continu bool, release bool)
 	}
 	if tt.remoteConn == nil {
 		resp := tt.br.rstByPacket(syn)
-		tt.br.writes <- resp.wire
+		tt.br.writes <- resp
 		// log.Debugf("<-- [TCP][%v][RST]", tt.id)
 		return false, true
 	}
