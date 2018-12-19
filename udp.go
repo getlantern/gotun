@@ -1,6 +1,7 @@
 package tun
 
 import (
+	"context"
 	"net"
 
 	"github.com/getlantern/errors"
@@ -22,7 +23,6 @@ func (br *bridge) onUDPPacket(ip *packet.IPv4, udp *packet.UDP) {
 		remotePort: udp.DstPort,
 	}
 
-	connID.remoteIP = "67.205.172.79" // hack for initial testing
 	conn := br.udpConns[connID]
 	var err error
 	if conn == nil {
@@ -38,9 +38,9 @@ func (br *bridge) onUDPPacket(ip *packet.IPv4, udp *packet.UDP) {
 	}
 }
 
-func (br *bridge) newUDPConn(connID fourtuple) (*net.UDPConn, error) {
+func (br *bridge) newUDPConn(connID fourtuple) (net.Conn, error) {
 	remoteAddr := &net.UDPAddr{IP: parseIPv4(connID.remoteIP), Port: int(connID.remotePort)}
-	conn, err := net.DialUDP("udp", nil, remoteAddr)
+	conn, err := br.dialUDP(context.Background(), "udp", remoteAddr.String())
 	if err != nil {
 		return nil, errors.New("Unable to dial upstream UDP connection for %v: %v", connID, err)
 	}
@@ -53,7 +53,6 @@ func (br *bridge) newUDPConn(connID fourtuple) (*net.UDPConn, error) {
 				log.Errorf("Error reading from remote end of UDP connection for %v: %v", connID, err)
 				return
 			}
-			responseAddr.IP = parseIPv4("10.0.0.1") // temporary hack for testing
 			pkt, fragments := br.responsePacket(parseIPv4(connID.localIP), responseAddr.IP, connID.localPort, uint16(responseAddr.Port), rb[:n])
 			br.writes <- pkt
 			for _, fragment := range fragments {

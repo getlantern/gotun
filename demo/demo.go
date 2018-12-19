@@ -1,11 +1,14 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
+	"net"
 
 	"github.com/getlantern/golog"
 	"github.com/getlantern/gotun"
+	"github.com/getlantern/netx"
 )
 
 var (
@@ -17,6 +20,7 @@ var (
 	tunAddr   = flag.String("tun-address", "10.0.0.2", "tun device address")
 	tunMask   = flag.String("tun-mask", "255.255.255.0", "tun device netmask")
 	tunGW     = flag.String("tun-gw", "10.0.0.1", "tun device gateway")
+	ifOut     = flag.String("ifout", "en0", "name of interface to use for outbound connections")
 )
 
 type fivetuple struct {
@@ -30,11 +34,54 @@ func (ft fivetuple) String() string {
 }
 
 func main() {
-	dev, e := tun.OpenTunDevice(*tunDevice, *tunAddr, *tunGW, *tunMask)
-	if e != nil {
-		log.Fatal(e)
+	dev, err := tun.OpenTunDevice(*tunDevice, *tunAddr, *tunGW, *tunMask)
+	if err != nil {
+		log.Fatal(err)
 	}
 	defer dev.Close()
 
-	tun.Serve(dev, &tun.ServerOpts{})
+	outIF, err := net.InterfaceByName(*ifOut)
+	if err != nil {
+		log.Fatal(err)
+	}
+	outIFAddrs, err := outIF.Addrs()
+	if err != nil {
+		log.Fatal(err)
+	}
+	var laddrTCP *net.TCPAddr
+	var laddrUDP *net.UDPAddr
+	for _, outIFAddr := range outIFAddrs {
+		switch t := outIFAddr.(type) {
+		case *net.IPNet:
+			ipv4 := t.IP.To4()
+			if ipv4 != nil {
+				laddrTCP = &net.TCPAddr{IP: ipv4, Port: 0}
+				laddrUDP = &net.UDPAddr{IP: ipv4, Port: 0}
+				break
+			}
+		}
+	}
+	if laddrTCP == nil {
+		log.Fatalf("Unable to get IPv4 address for interface %v", *ifOut)
+	}
+	log.Debugf("Outbound TCP will use %v", laddrTCP)
+	log.Debugf("Outbound UDP will use %v", laddrUDP)
+
+	tun.Serve(dev, &tun.ServerOpts{
+		DialTCP: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			raddr, err := netx.Resolve(network, addr)
+			if err != nil {
+				return nil, err
+			}
+			// TODO: respect deadline in context
+			return net.DialTCP(network, laddrTCP, raddr)
+		},
+		DialUDP: func(ctx context.Context, network, addr string) (*net.UDPConn, error) {
+			raddr, err := netx.ResolveUDPAddr(network, addr)
+			if err != nil {
+				return nil, err
+			}
+			return netx.DialUDP(network, laddrUDP, raddr)
+		},
+	})
 }

@@ -1,6 +1,7 @@
 package tun
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net"
@@ -8,6 +9,7 @@ import (
 
 	"github.com/getlantern/golog"
 	"github.com/getlantern/gotun/packet"
+	"github.com/getlantern/netx"
 	"github.com/oxtoacart/bpool"
 )
 
@@ -23,6 +25,8 @@ var (
 
 type bridge struct {
 	dev              io.ReadWriteCloser
+	dialTCP          func(ctx context.Context, network, addr string) (net.Conn, error)
+	dialUDP          func(ctx context.Context, network, addr string) (*net.UDPConn, error)
 	mtu              int
 	ipFragments      map[uint16]*ipPacket
 	writes           chan interface{}
@@ -30,7 +34,7 @@ type bridge struct {
 	udpPacketPool    *sync.Pool
 	tcpConnTrackMap  map[string]*tcpConnTrack
 	tcpConnTrackLock sync.Mutex
-	udpConns         map[fourtuple]*net.UDPConn
+	udpConns         map[fourtuple]net.Conn
 }
 
 type fourtuple struct {
@@ -46,6 +50,8 @@ type ServerOpts struct {
 	MTU              int
 	WriteBufferDepth int
 	BufferPoolDepth  int
+	DialTCP          func(ctx context.Context, network, addr string) (net.Conn, error)
+	DialUDP          func(ctx context.Context, network, addr string) (*net.UDPConn, error)
 }
 
 func Serve(dev io.ReadWriteCloser, opts *ServerOpts) error {
@@ -59,15 +65,31 @@ func Serve(dev io.ReadWriteCloser, opts *ServerOpts) error {
 	}
 	if opts.BufferPoolDepth <= 0 {
 		opts.BufferPoolDepth = defaultBufferPoolDepth
-		log.Debugf("Defaulted buffer pool depth to %v", opts.BufferPoolDepth)
+		log.Debugf("Defaulting buffer pool depth to %v", opts.BufferPoolDepth)
+	}
+	if opts.DialTCP == nil {
+		opts.DialTCP = netx.DialContext
+		log.Debug("Defaulted tcp dial function")
+	}
+	if opts.DialUDP == nil {
+		opts.DialUDP = func(ctx context.Context, network, addr string) (*net.UDPConn, error) {
+			udpAddr, err := netx.ResolveUDPAddr(network, addr)
+			if err != nil {
+				return nil, err
+			}
+			return netx.DialUDP(network, nil, udpAddr)
+		}
+		log.Debug("Defaulting udp dial function")
 	}
 	br := &bridge{
 		dev:             dev,
+		dialTCP:         opts.DialTCP,
+		dialUDP:         opts.DialUDP,
 		mtu:             opts.MTU,
 		ipFragments:     make(map[uint16]*ipPacket),
 		writes:          make(chan interface{}, opts.WriteBufferDepth),
 		tcpConnTrackMap: make(map[string]*tcpConnTrack),
-		udpConns:        make(map[fourtuple]*net.UDPConn),
+		udpConns:        make(map[fourtuple]net.Conn),
 		buffers:         bpool.NewBytePool(opts.BufferPoolDepth, opts.MTU),
 		udpPacketPool: &sync.Pool{
 			New: func() interface{} {

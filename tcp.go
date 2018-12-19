@@ -1,6 +1,7 @@
 package tun
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"strings"
@@ -9,7 +10,6 @@ import (
 	"time"
 
 	"github.com/getlantern/gotun/packet"
-	"github.com/getlantern/netx"
 )
 
 type tcpPacket struct {
@@ -41,7 +41,6 @@ type tcpConnTrack struct {
 	id string
 
 	input         chan *tcpPacket
-	toTunCh       chan<- interface{}
 	fromRemoteCh  chan []byte
 	toRemoteCh    chan *tcpPacket
 	remoteCloseCh chan bool
@@ -242,7 +241,7 @@ func (br *bridge) rstByPacket(pkt *tcpPacket) *tcpPacket {
 }
 
 func (tt *tcpConnTrack) changeState(nxt tcpState) {
-	// log.Debugf("### [%s -> %s]", tcpstateString(tt.state), tcpstateString(nxt))
+	// log.Debugf("### [%v -> %v]", tcpstateString(tt.state), tcpstateString(nxt))
 	tt.state = nxt
 }
 
@@ -286,11 +285,11 @@ func (tt *tcpConnTrack) relayPayload(pkt *tcpPacket) bool {
 }
 
 func (tt *tcpConnTrack) send(pkt *tcpPacket) {
-	// log.Debugf("<-- [TCP][%s][%s][seq:%d][ack:%d][payload:%d]", tt.id, tcpflagsString(pkt.tcp), pkt.tcp.Seq, pkt.tcp.Ack, len(pkt.tcp.Payload))
+	// log.Debugf("<-- [TCP][%v][%v][seq:%d][ack:%d][payload:%d]", tt.id, tcpflagsString(pkt.tcp), pkt.tcp.Seq, pkt.tcp.Ack, len(pkt.tcp.Payload))
 	if pkt.tcp.ACK {
 		tt.lastAck = pkt.tcp.Ack
 	}
-	tt.toTunCh <- pkt
+	tt.br.writes <- pkt
 }
 
 func (tt *tcpConnTrack) synAck(syn *tcpPacket) {
@@ -393,14 +392,17 @@ func (tt *tcpConnTrack) payload(data []byte) {
 	tt.nxtSeq = tt.nxtSeq + uint32(len(data))
 }
 
-// stateClosed receives a SYN packet, tries to connect the socks proxy, gives a
+// stateClosed receives a SYN packet, tries to connect the the remote, gives a
 // SYN/ACK if success, otherwise RST
 func (tt *tcpConnTrack) stateClosed(syn *tcpPacket) (continu bool, release bool) {
 	var e error
 	for i := 0; i < 2; i++ {
-		tt.remoteConn, e = netx.DialTimeout("tcp", fmt.Sprintf("%v:%v", "67.205.172.79", syn.tcp.DstPort), 10*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		tt.remoteConn, e = tt.br.dialTCP(ctx, "tcp", fmt.Sprintf("%v:%v", syn.ip.DstIP.String(), syn.tcp.DstPort))
 		if e != nil {
-			log.Debugf("fail to connect SOCKS proxy: %s", e)
+			log.Debugf("fail to connect to remote: %v", e)
+			tt.remoteConn = nil
 		} else {
 			// no timeout
 			tt.remoteConn.SetDeadline(time.Time{})
@@ -409,8 +411,8 @@ func (tt *tcpConnTrack) stateClosed(syn *tcpPacket) (continu bool, release bool)
 	}
 	if tt.remoteConn == nil {
 		resp := tt.br.rstByPacket(syn)
-		tt.toTunCh <- resp.wire
-		// log.Debugf("<-- [TCP][%s][RST]", tt.id)
+		tt.br.writes <- resp.wire
+		// log.Debugf("<-- [TCP][%v][RST]", tt.id)
 		return false, true
 	}
 	// context variables
@@ -472,7 +474,7 @@ func (tt *tcpConnTrack) copyToRemote(dstIP net.IP, dstPort uint16, conn net.Conn
 
 		n, e := conn.Read(buf[:cur])
 		if e != nil {
-			log.Errorf("error to read from socks: %s", e)
+			log.Errorf("error reading from remote: %v", e)
 			conn.Close()
 			break
 		} else {
@@ -500,8 +502,8 @@ func (tt *tcpConnTrack) stateSynRcvd(pkt *tcpPacket) (continu bool, release bool
 	if !(tt.validSeq(pkt) && tt.validAck(pkt)) {
 		if !pkt.tcp.RST {
 			resp := tt.br.rstByPacket(pkt)
-			tt.toTunCh <- resp
-			// log.Debugf("<-- [TCP][%s][RST] continue", tt.id)
+			tt.br.writes <- resp
+			// log.Debugf("<-- [TCP][%v][RST] continue", tt.id)
 		}
 		return true, true
 	}
@@ -520,7 +522,7 @@ func (tt *tcpConnTrack) stateSynRcvd(pkt *tcpPacket) (continu bool, release bool
 	go tt.copyToRemote(tt.remoteIP, uint16(tt.remotePort), tt.remoteConn, tt.fromRemoteCh, tt.toRemoteCh, tt.remoteCloseCh)
 	if len(pkt.tcp.Payload) != 0 {
 		if tt.relayPayload(pkt) {
-			// pkt hands to socks writer
+			// pkt hands to remote writer
 			release = false
 		}
 	}
@@ -546,7 +548,7 @@ func (tt *tcpConnTrack) stateEstablished(pkt *tcpPacket) (continu bool, release 
 	release = true
 	if len(pkt.tcp.Payload) != 0 {
 		if tt.relayPayload(pkt) {
-			// pkt hands to socks writer
+			// pkt hands to remote writer
 			release = false
 		}
 	}
@@ -672,7 +674,7 @@ func (tt *tcpConnTrack) run() {
 
 		select {
 		case pkt := <-tt.input:
-			// log.Debugf("--> [TCP][%s][%s][%s][seq:%d][ack:%d][payload:%d]", tt.id, tcpstateString(tt.state), tcpflagsString(pkt.tcp), pkt.tcp.Seq, pkt.tcp.Ack, len(pkt.tcp.Payload))
+			// log.Debugf("--> [TCP][%v][%v][%v][seq:%d][ack:%d][payload:%d]", tt.id, tcpstateString(tt.state), tcpflagsString(pkt.tcp), pkt.tcp.Seq, pkt.tcp.Ack, len(pkt.tcp.Payload))
 			var continu, release bool
 
 			tt.updateSendWindow(pkt)
@@ -746,7 +748,6 @@ func (br *bridge) createTCPConnTrack(id string, ip *packet.IPv4, tcp *packet.TCP
 	track := &tcpConnTrack{
 		br:            br,
 		id:            id,
-		toTunCh:       br.writes,
 		input:         make(chan *tcpPacket, 10000),
 		fromRemoteCh:  make(chan []byte, 100),
 		toRemoteCh:    make(chan *tcpPacket, 100),
@@ -797,15 +798,15 @@ func (br *bridge) onTCPPacket(raw []byte, ip *packet.IPv4, tcp *packet.TCP) {
 	} else {
 		// ignore RST, if there is no track of this connection
 		if tcp.RST {
-			// log.Debugf("--> [TCP][%s][%s]", connID, tcpflagsString(tcp))
+			// log.Debugf("--> [TCP][%v][%v]", connID, tcpflagsString(tcp))
 			return
 		}
 		// return a RST to non-SYN packet
 		if !tcp.SYN {
-			// log.Debugf("--> [TCP][%s][%s]", connID, tcpflagsString(tcp))
+			// log.Debugf("--> [TCP][%v][%v]", connID, tcpflagsString(tcp))
 			resp := br.rst(ip.SrcIP, ip.DstIP, tcp.SrcPort, tcp.DstPort, tcp.Seq, tcp.Ack, uint32(len(tcp.Payload)))
 			br.writes <- resp
-			// log.Debugf("<-- [TCP][%s][RST]", connID)
+			// log.Debugf("<-- [TCP][%v][RST]", connID)
 			return
 		}
 		pkt := br.copyTCPPacket(raw, ip, tcp)
