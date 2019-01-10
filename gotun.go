@@ -127,6 +127,10 @@ func (br *bridge) read() error {
 		buf := make([]byte, br.mtu)
 		n, err := br.dev.Read(buf)
 		if err != nil {
+			if err == errStopMarkerReceived {
+				log.Debug("bridge received close signal")
+				return nil
+			}
 			return log.Errorf("error reading packet: %v", err)
 		}
 		data := buf[:n]

@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"sync/atomic"
 	"syscall"
 )
 
@@ -37,12 +38,13 @@ type tunDev struct {
 	gw     string
 	gwIP   net.IP
 	f      *os.File
+	closed int64
 }
 
 func (dev *tunDev) Read(data []byte) (int, error) {
 	n, e := dev.f.Read(data)
 	if e == nil && isStopMarker(data[:n], dev.addrIP, dev.gwIP) {
-		return 0, errors.New("received stop marker")
+		return 0, errStopMarkerReceived
 	}
 	return n, e
 }
@@ -52,6 +54,10 @@ func (dev *tunDev) Write(data []byte) (int, error) {
 }
 
 func (dev *tunDev) Close() error {
-	sendStopMarker(dev.addr, dev.gw)
-	return dev.f.Close()
+	if atomic.CompareAndSwapInt64(&dev.closed, 0, 1) {
+		sendStopMarker(dev.addr, dev.gw)
+		return dev.f.Close()
+	} else {
+		return errAlreadyClosed
+	}
 }

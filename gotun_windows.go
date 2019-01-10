@@ -9,6 +9,7 @@ import (
 	"net"
 	"os/exec"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"unsafe"
 
@@ -259,6 +260,7 @@ type winTapDev struct {
 	wInitiated  bool
 	rOverlapped windows.Overlapped
 	wOverlapped windows.Overlapped
+	closed      int64
 }
 
 func newWinTapDev(fd windows.Handle, addr string, gw string) *winTapDev {
@@ -305,7 +307,7 @@ func (dev *winTapDev) Read(data []byte) (int, error) {
 		}
 		if nr > 14 {
 			if isStopMarker(dev.rBuf[14:nr], dev.addrIP, dev.gwIP) {
-				return 0, errors.New("received stop marker")
+				return 0, errStopMarkerReceived
 			}
 
 			// discard IPv6 packets
@@ -367,7 +369,11 @@ func getOverlappedResult(h windows.Handle, overlapped *windows.Overlapped) (int,
 }
 
 func (dev *winTapDev) Close() error {
-	log.Debug("close winTap device")
-	sendStopMarker(dev.addr, dev.gw)
-	return windows.Close(dev.fd)
+	if atomic.CompareAndSwapInt64(&dev.closed, 0, 1) {
+		log.Debug("close winTap device")
+		sendStopMarker(dev.addr, dev.gw)
+		return windows.Close(dev.fd)
+	} else {
+		return errAlreadyClosed
+	}
 }

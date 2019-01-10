@@ -2,10 +2,16 @@ package tun
 
 import (
 	"bytes"
+	"errors"
 	"net"
 )
 
-var stopMarker = []byte{2, 2, 2, 2, 2, 2, 2, 2}
+var (
+	stopMarker = []byte{2, 2, 2, 2, 2, 2, 2, 2}
+
+	errStopMarkerReceived = errors.New("received stop marker")
+	errAlreadyClosed      = errors.New("already closed")
+)
 
 // Close of Windows and Linux tun/tap device do not interrupt blocking Read.
 // sendStopMarker is used to issue a specific packet to notify threads blocking

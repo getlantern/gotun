@@ -5,6 +5,9 @@ import (
 	"flag"
 	"fmt"
 	"net"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/getlantern/golog"
@@ -68,9 +71,18 @@ func main() {
 	log.Debugf("Outbound TCP will use %v", laddrTCP)
 	log.Debugf("Outbound UDP will use %v", laddrUDP)
 
+	ch := make(chan os.Signal, 1)
+	signal.Notify(ch,
+		syscall.SIGHUP,
+		syscall.SIGINT,
+		syscall.SIGTERM,
+		syscall.SIGQUIT)
 	go func() {
-		time.Sleep(1 * time.Minute)
+		<-ch
+		log.Debug("Closing TUN device")
 		dev.Close()
+		log.Debug("Closed TUN device")
+		time.Sleep(1 * time.Minute)
 	}()
 
 	tun.Serve(dev, &tun.ServerOpts{
