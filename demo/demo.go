@@ -85,7 +85,7 @@ func main() {
 		time.Sleep(1 * time.Minute)
 	}()
 
-	tun.Serve(dev, &tun.ServerOpts{
+	tun.NewBridge(dev, &tun.ServerOpts{
 		IdleTimeout: 5 * time.Second,
 		DialTCP: func(ctx context.Context, network, addr string) (net.Conn, error) {
 			raddr, err := netx.Resolve(network, addr)
@@ -101,5 +101,5 @@ func main() {
 			}
 			return netx.DialUDP(network, laddrUDP, raddr)
 		},
-	})
+	}).Serve()
 }

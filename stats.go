@@ -11,13 +11,21 @@ func (br *bridge) trackStats() {
 		case <-br.stopCh:
 			return
 		case <-ticker.C:
-			br.tcpConnTrackMx.Lock()
-			tcpConns := len(br.tcpConnTrack)
-			br.tcpConnTrackMx.Unlock()
-			br.udpConnTrackMx.Lock()
-			udpConns := len(br.udpConnTrack)
-			br.udpConnTrackMx.Unlock()
-			log.Debugf("TCP Conns: %v    UDP Conns: %v", tcpConns, udpConns)
+			log.Debugf("TCP Conns: %v    UDP Conns: %v", br.NumTCPConns(), br.NumUDPConns())
 		}
 	}
+}
+
+func (br *bridge) NumTCPConns() int {
+	br.tcpConnTrackMx.Lock()
+	tcpConns := len(br.tcpConnTrack)
+	br.tcpConnTrackMx.Unlock()
+	return tcpConns
+}
+
+func (br *bridge) NumUDPConns() int {
+	br.udpConnTrackMx.Lock()
+	udpConns := len(br.udpConnTrack)
+	br.udpConnTrackMx.Unlock()
+	return udpConns
 }

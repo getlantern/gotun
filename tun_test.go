@@ -4,10 +4,20 @@ import (
 	"context"
 	"io"
 	"net"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/getlantern/fdcount"
 	"github.com/stretchr/testify/assert"
+)
+
+const (
+	idleTimeout = 1 * time.Second
+)
+
+var (
+	serverTCPConnections int64
 )
 
 // Note - this test has to be run with root permissions to allow setting up the
@@ -22,11 +32,10 @@ func TestTCPandUDP(t *testing.T) {
 	defer dev.Close()
 
 	d := &net.Dialer{}
-	go Serve(dev, &ServerOpts{
-		IdleTimeout: 5 * time.Second,
+	br := NewBridge(dev, &ServerOpts{
+		IdleTimeout: idleTimeout,
 		DialTCP: func(ctx context.Context, network, addr string) (net.Conn, error) {
 			// Send everything to local echo server
-			log.Debug("dialing")
 			_, port, _ := net.SplitHostPort(addr)
 			return d.DialContext(ctx, network, ip+":"+port)
 		},
@@ -40,6 +49,7 @@ func TestTCPandUDP(t *testing.T) {
 			return conn.(*net.UDPConn), nil
 		},
 	})
+	go br.Serve()
 
 	closeCh := make(chan interface{})
 	echoAddr := tcpEcho(t, closeCh, ip)
@@ -50,6 +60,8 @@ func TestTCPandUDP(t *testing.T) {
 	echoAddr = "10.0.0.1:" + port
 
 	b := make([]byte, 8)
+
+	_, connCount, err := fdcount.Matching("TCP")
 
 	log.Debugf("Dialing echo server at: %v", echoAddr)
 	uconn, err := net.Dial("udp", echoAddr)
@@ -83,6 +95,15 @@ func TestTCPandUDP(t *testing.T) {
 		return
 	}
 	assert.Equal(t, "hellotcp", string(b))
+	conn.Close()
+	time.Sleep(50 * time.Millisecond)
+	assert.Zero(t, br.NumTCPConns(), "TCP conn should be quickly purged from connection tracking")
+	assert.Zero(t, atomic.LoadInt64(&serverTCPConnections), "Server-side TCP connection should have been closed")
+
+	time.Sleep(2 * idleTimeout)
+	assert.Zero(t, br.NumUDPConns(), "UDP conn should be purged after idle timeout")
+
+	connCount.AssertDelta(0)
 }
 
 func tcpEcho(t *testing.T, closeCh <-chan interface{}, ip string) string {
@@ -102,7 +123,9 @@ func tcpEcho(t *testing.T, closeCh <-chan interface{}, ip string) string {
 				t.Error(err)
 				return
 			}
+			atomic.AddInt64(&serverTCPConnections, 1)
 			go io.Copy(conn, conn)
+			atomic.AddInt64(&serverTCPConnections, -1)
 		}
 	}()
 

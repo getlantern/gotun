@@ -60,7 +60,18 @@ type ServerOpts struct {
 	DialUDP          func(ctx context.Context, network, addr string) (*net.UDPConn, error)
 }
 
-func Serve(dev io.ReadWriteCloser, opts *ServerOpts) error {
+type Bridge interface {
+	// Serve() services clients (blocking)
+	Serve() error
+
+	// NumTCPConns returns the current number of TCP connections being tracked
+	NumTCPConns() int
+
+	// NumUDPConns returns the current number of UDP connections being tracked
+	NumUDPConns() int
+}
+
+func NewBridge(dev io.ReadWriteCloser, opts *ServerOpts) Bridge {
 	if opts.MTU <= 0 {
 		opts.MTU = defaultMTU
 		log.Debugf("Defaulting mtu to %v", opts.MTU)
@@ -90,7 +101,8 @@ func Serve(dev io.ReadWriteCloser, opts *ServerOpts) error {
 		}
 		log.Debug("Defaulting udp dial function")
 	}
-	br := &bridge{
+
+	return &bridge{
 		dev:          dev,
 		dialTCP:      opts.DialTCP,
 		dialUDP:      opts.DialUDP,
@@ -108,7 +120,9 @@ func Serve(dev io.ReadWriteCloser, opts *ServerOpts) error {
 		},
 		stopCh: make(chan bool),
 	}
+}
 
+func (br *bridge) Serve() error {
 	go br.write()
 	go br.trackStats()
 	return br.read()
