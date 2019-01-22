@@ -9,8 +9,8 @@ import (
 	"syscall"
 )
 
-func WrapTunDevice(fd int) (TUNDevice, error) {
-	return NewTunDev(os.NewFile(uintptr(fd), "wrapped"), "", ""), nil
+func WrapTunDevice(fd int, addr, gw string) (TUNDevice, error) {
+	return NewTunDev(os.NewFile(uintptr(fd), "wrapped"), addr, gw), nil
 }
 
 func NewTunDev(file *os.File, addr string, gw string) TUNDevice {
