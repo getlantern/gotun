@@ -32,13 +32,13 @@ func NewTunDev(file *os.File, addr string, gw string) io.ReadWriteCloser {
 }
 
 type tunDev struct {
-	name   string
-	addr   string
-	addrIP net.IP
-	gw     string
-	gwIP   net.IP
-	f      *os.File
-	closed int64
+	name    string
+	addr    string
+	addrIP  net.IP
+	gw      string
+	gwIP    net.IP
+	f       *os.File
+	stopped int64
 }
 
 func (dev *tunDev) Read(data []byte) (int, error) {
@@ -53,11 +53,23 @@ func (dev *tunDev) Write(data []byte) (int, error) {
 	return dev.f.Write(data)
 }
 
-func (dev *tunDev) Close() error {
+func (dev *tunDev) Stop() error {
 	if atomic.CompareAndSwapInt64(&dev.closed, 0, 1) {
 		sendStopMarker(dev.addr, dev.gw)
 		return dev.f.Close()
 	} else {
 		return errAlreadyClosed
 	}
+}
+
+func (dev *tunDev) Stop() error {
+	if atomic.CompareAndSwapInt64(&dev.stopped, 0, 1) {
+		sendStopMarker(dev.addr, dev.gw)
+		return nil
+	}
+	return errAlreadyStopped
+}
+
+func (dev *tunDev) Close() error {
+	return dev.f.Close()
 }

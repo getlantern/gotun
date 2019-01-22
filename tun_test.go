@@ -29,10 +29,12 @@ func TestTCPandUDP(t *testing.T) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer dev.Close()
+	defer func() {
+		dev.Close()
+	}()
 
 	d := &net.Dialer{}
-	br := NewBridge(dev, &ServerOpts{
+	br := NewBridge(dev, &BridgeOpts{
 		IdleTimeout: idleTimeout,
 		DialTCP: func(ctx context.Context, network, addr string) (net.Conn, error) {
 			// Send everything to local echo server
@@ -42,9 +44,9 @@ func TestTCPandUDP(t *testing.T) {
 		DialUDP: func(ctx context.Context, network, addr string) (*net.UDPConn, error) {
 			// Send everything to local echo server
 			_, port, _ := net.SplitHostPort(addr)
-			conn, err := net.Dial(network, ip+":"+port)
-			if err != nil {
-				return nil, err
+			conn, dialErr := net.Dial(network, ip+":"+port)
+			if dialErr != nil {
+				return nil, dialErr
 			}
 			return conn.(*net.UDPConn), nil
 		},
@@ -62,9 +64,15 @@ func TestTCPandUDP(t *testing.T) {
 	b := make([]byte, 8)
 
 	_, connCount, err := fdcount.Matching("TCP")
+	if !assert.NoError(t, err, "unable to get initial socket count") {
+		return
+	}
 
 	log.Debugf("Dialing echo server at: %v", echoAddr)
 	uconn, err := net.Dial("udp", echoAddr)
+	if !assert.NoError(t, err, "Unable to get UDP connection to TUN device") {
+		return
+	}
 	defer uconn.Close()
 
 	_, err = uconn.Write([]byte("helloudp"))

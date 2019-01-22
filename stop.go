@@ -10,7 +10,7 @@ var (
 	stopMarker = []byte{2, 2, 2, 2, 2, 2, 2, 2}
 
 	errStopMarkerReceived = errors.New("received stop marker")
-	errAlreadyClosed      = errors.New("already closed")
+	errAlreadyStopped     = errors.New("already stopped")
 )
 
 // Close of Windows and Linux tun/tap device do not interrupt blocking Read.

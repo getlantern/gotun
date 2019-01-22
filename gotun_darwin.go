@@ -2,9 +2,10 @@ package tun
 
 import (
 	"fmt"
-	"io"
+	"net"
 	"os"
 	"os/exec"
+	"sync/atomic"
 	"syscall"
 	"unsafe"
 )
@@ -26,13 +27,23 @@ type sockaddrCtl struct {
 type utunDev struct {
 	f *os.File
 
+	addr   string
+	addrIP net.IP
+	gw     string
+	gwIP   net.IP
+
 	rBuf [2048]byte
 	wBuf [2048]byte
+
+	stopped int64
 }
 
 func (dev *utunDev) Read(data []byte) (int, error) {
 	n, e := dev.f.Read(dev.rBuf[:])
 	if n > 0 {
+		if e == nil && isStopMarker(dev.rBuf[4:n], dev.addrIP, dev.gwIP) {
+			return 0, errStopMarkerReceived
+		}
 		copy(data, dev.rBuf[4:n])
 		n -= 4
 	}
@@ -45,19 +56,15 @@ func (dev *utunDev) Write(data []byte) (int, error) {
 	return dev.f.Write(dev.wBuf[:n+4])
 }
 
-func (dev *utunDev) Close() error {
-	return dev.f.Close()
-}
-
 var sockaddrCtlSize uintptr = 32
 
-func OpenTunDevice(name, addr, gw, mask string) (io.ReadWriteCloser, error) {
+func OpenTunDevice(name, addr, gw, mask string) (TUNDevice, error) {
 	fd, err := OpenAndRegisterTunDevice(name, addr, gw, mask)
 	if err != nil {
 		return nil, err
 	}
 
-	return WrapTunDevice(fd)
+	return WrapTunDevice(fd, addr, gw)
 }
 
 func OpenAndRegisterTunDevice(name, addr, gw, mask string) (int, error) {
@@ -102,14 +109,18 @@ func OpenAndRegisterTunDevice(name, addr, gw, mask string) (int, error) {
 	return fd, nil
 }
 
-func WrapTunDevice(fd int) (io.ReadWriteCloser, error) {
+func WrapTunDevice(fd int, addr, gw string) (TUNDevice, error) {
 	ifName, err := getInterfaceName(fd)
 	if err != nil {
 		return nil, err
 	}
 
 	dev := &utunDev{
-		f: os.NewFile(uintptr(fd), ifName),
+		f:      os.NewFile(uintptr(fd), ifName),
+		addr:   addr,
+		addrIP: net.ParseIP(addr),
+		gw:     gw,
+		gwIP:   net.ParseIP(gw),
 	}
 	copy(dev.wBuf[:], []byte{0, 0, 0, 2})
 	return dev, nil
@@ -129,4 +140,16 @@ func getInterfaceName(fd int) (string, error) {
 		return "", fmt.Errorf("error in syscall.Syscall6(syscall.SYS_GETSOCKOPT, ...): %v", errno)
 	}
 	return string(ifName.name[:ifNameSize-1]), nil
+}
+
+func (dev *utunDev) Stop() error {
+	if atomic.CompareAndSwapInt64(&dev.stopped, 0, 1) {
+		sendStopMarker(dev.addr, dev.gw)
+		return nil
+	}
+	return errAlreadyStopped
+}
+
+func (dev *utunDev) Close() error {
+	return dev.f.Close()
 }

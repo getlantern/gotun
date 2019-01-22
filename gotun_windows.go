@@ -149,7 +149,7 @@ func getTuntapComponentId() (string, error) {
 	return "", errors.New("not found component id")
 }
 
-func OpenTunDevice(name, addr, gw, mask string, dns []string) (io.ReadWriteCloser, error) {
+func OpenTunDevice(name, addr, gw, mask string, dns []string) (TUNDevice, error) {
 	componentId, err := getTuntapComponentId()
 	if err != nil {
 		return nil, err
@@ -260,7 +260,7 @@ type winTapDev struct {
 	wInitiated  bool
 	rOverlapped windows.Overlapped
 	wOverlapped windows.Overlapped
-	closed      int64
+	stopped     int64
 }
 
 func newWinTapDev(fd windows.Handle, addr string, gw string) *winTapDev {
@@ -368,12 +368,14 @@ func getOverlappedResult(h windows.Handle, overlapped *windows.Overlapped) (int,
 	return n, nil
 }
 
-func (dev *winTapDev) Close() error {
-	if atomic.CompareAndSwapInt64(&dev.closed, 0, 1) {
-		log.Debug("close winTap device")
+func (dev *winTapDev) Stop() error {
+	if atomic.CompareAndSwapInt64(&dev.stopped, 0, 1) {
 		sendStopMarker(dev.addr, dev.gw)
-		return windows.Close(dev.fd)
-	} else {
-		return errAlreadyClosed
+		return nil
 	}
+	return errAlreadyStopped
+}
+
+func (dev *winTapDev) Close() error {
+	return windows.Close(dev.fd)
 }

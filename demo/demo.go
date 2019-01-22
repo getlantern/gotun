@@ -42,7 +42,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer dev.Close()
+	defer dev.Stop()
 
 	outIF, err := net.InterfaceByName(*ifOut)
 	if err != nil {
@@ -79,13 +79,12 @@ func main() {
 		syscall.SIGQUIT)
 	go func() {
 		<-ch
-		log.Debug("Closing TUN device")
-		dev.Close()
-		log.Debug("Closed TUN device")
-		time.Sleep(1 * time.Minute)
+		log.Debug("Stopping TUN device")
+		dev.Stop()
+		log.Debug("Stopped TUN device")
 	}()
 
-	tun.NewBridge(dev, &tun.ServerOpts{
+	log.Debugf("Final result: %v", tun.NewBridge(dev, &tun.BridgeOpts{
 		IdleTimeout: 5 * time.Second,
 		DialTCP: func(ctx context.Context, network, addr string) (net.Conn, error) {
 			raddr, err := netx.Resolve(network, addr)
@@ -101,5 +100,5 @@ func main() {
 			}
 			return netx.DialUDP(network, laddrUDP, raddr)
 		},
-	}).Serve()
+	}).Serve())
 }
