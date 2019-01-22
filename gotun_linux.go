@@ -1,7 +1,6 @@
 package tun
 
 import (
-	"io"
 	"os"
 	"os/exec"
 	"syscall"

@@ -3,19 +3,17 @@
 package tun
 
 import (
-	"errors"
-	"io"
 	"net"
 	"os"
 	"sync/atomic"
 	"syscall"
 )
 
-func WrapTunDevice(fd int) (io.ReadWriteCloser, error) {
+func WrapTunDevice(fd int) (TUNDevice, error) {
 	return NewTunDev(os.NewFile(uintptr(fd), "wrapped"), "", ""), nil
 }
 
-func NewTunDev(file *os.File, addr string, gw string) io.ReadWriteCloser {
+func NewTunDev(file *os.File, addr string, gw string) TUNDevice {
 	syscall.SetNonblock(int(file.Fd()), false)
 	dev := &tunDev{
 		f: file,
