@@ -54,15 +54,6 @@ func (dev *tunDev) Write(data []byte) (int, error) {
 }
 
 func (dev *tunDev) Stop() error {
-	if atomic.CompareAndSwapInt64(&dev.closed, 0, 1) {
-		sendStopMarker(dev.addr, dev.gw)
-		return dev.f.Close()
-	} else {
-		return errAlreadyClosed
-	}
-}
-
-func (dev *tunDev) Stop() error {
 	if atomic.CompareAndSwapInt64(&dev.stopped, 0, 1) {
 		sendStopMarker(dev.addr, dev.gw)
 		return nil
