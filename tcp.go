@@ -660,13 +660,9 @@ func (tt *tcpConnTrack) updateSendWindow(pkt *tcpPacket) {
 }
 
 func (tt *tcpConnTrack) run() {
-	ackTimer := time.NewTimer(0)
-	timeout := time.NewTimer(0)
-	defer ackTimer.Stop()
-	defer timeout.Stop()
-
 	for {
-		timeout.Reset(5 * time.Minute)
+		var ackTimer *time.Timer
+		var timeout *time.Timer = time.NewTimer(5 * time.Minute)
 
 		var ackTimeout <-chan time.Time
 		var remoteCloseCh chan bool
@@ -675,7 +671,7 @@ func (tt *tcpConnTrack) run() {
 		if tt.state == ESTABLISHED {
 			remoteCloseCh = tt.remoteCloseCh
 			fromRemoteCh = tt.fromRemoteCh
-			ackTimer.Reset(10 * time.Millisecond)
+			ackTimer = time.NewTimer(10 * time.Millisecond)
 			ackTimeout = ackTimer.C
 		}
 
