@@ -660,7 +660,7 @@ func (tt *tcpConnTrack) updateSendWindow(pkt *tcpPacket) {
 }
 
 func (tt *tcpConnTrack) run() {
-	ticker := time.NewTicker(10 * time.Second)
+	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
 	lastActivity := time.Now()
@@ -672,14 +672,12 @@ func (tt *tcpConnTrack) run() {
 	}
 
 	for {
-		ackRequired := false
 		var remoteCloseCh chan bool
 		var fromRemoteCh chan []byte
 		// enable some channels only when the state is ESTABLISHED
 		if tt.state == ESTABLISHED {
 			remoteCloseCh = tt.remoteCloseCh
 			fromRemoteCh = tt.fromRemoteCh
-			ackRequired = true
 		}
 
 		select {
@@ -688,6 +686,7 @@ func (tt *tcpConnTrack) run() {
 			var continu, release bool
 
 			tt.updateSendWindow(pkt)
+			ackRequired := false
 			switch tt.state {
 			case CLOSED:
 				continu, release = tt.stateClosed(pkt)
@@ -695,6 +694,7 @@ func (tt *tcpConnTrack) run() {
 				continu, release = tt.stateSynRcvd(pkt)
 			case ESTABLISHED:
 				continu, release = tt.stateEstablished(pkt)
+				ackRequired = !release
 			case FIN_WAIT_1:
 				continu, release = tt.stateFinWait1(pkt)
 			case FIN_WAIT_2:
@@ -715,15 +715,13 @@ func (tt *tcpConnTrack) run() {
 				tt.br.clearTCPConnTrack(tt.id)
 				return
 			}
-			markActive()
-
-		case <-ticker.C:
 			if ackRequired && tt.lastAck < tt.rcvNxtSeq {
 				// have something to ack
 				tt.ack()
-				markActive()
 			}
+			markActive()
 
+		case <-ticker.C:
 			if timedOut() {
 				if tt.remoteConn != nil {
 					tt.remoteConn.Close()
