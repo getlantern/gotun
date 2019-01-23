@@ -660,19 +660,26 @@ func (tt *tcpConnTrack) updateSendWindow(pkt *tcpPacket) {
 }
 
 func (tt *tcpConnTrack) run() {
-	for {
-		var ackTimer *time.Timer
-		var timeout *time.Timer = time.NewTimer(5 * time.Minute)
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
 
-		var ackTimeout <-chan time.Time
+	lastActivity := time.Now()
+	markActive := func() {
+		lastActivity = time.Now()
+	}
+	timedOut := func() bool {
+		return time.Now().Sub(lastActivity) > 5*time.Minute
+	}
+
+	for {
+		ackRequired := false
 		var remoteCloseCh chan bool
 		var fromRemoteCh chan []byte
 		// enable some channels only when the state is ESTABLISHED
 		if tt.state == ESTABLISHED {
 			remoteCloseCh = tt.remoteCloseCh
 			fromRemoteCh = tt.fromRemoteCh
-			ackTimer = time.NewTimer(10 * time.Millisecond)
-			ackTimeout = ackTimer.C
+			ackRequired = true
 		}
 
 		select {
@@ -708,27 +715,32 @@ func (tt *tcpConnTrack) run() {
 				tt.br.clearTCPConnTrack(tt.id)
 				return
 			}
+			markActive()
 
-		case <-ackTimeout:
-			if tt.lastAck < tt.rcvNxtSeq {
+		case <-ticker.C:
+			if ackRequired && tt.lastAck < tt.rcvNxtSeq {
 				// have something to ack
 				tt.ack()
+				markActive()
+			}
+
+			if timedOut() {
+				if tt.remoteConn != nil {
+					tt.remoteConn.Close()
+				}
+				close(tt.quitBySelf)
+				tt.br.clearTCPConnTrack(tt.id)
+				return
 			}
 
 		case data := <-fromRemoteCh:
 			tt.payload(data)
+			markActive()
 
 		case <-remoteCloseCh:
 			tt.finAck()
 			tt.changeState(FIN_WAIT_1)
-
-		case <-timeout.C:
-			if tt.remoteConn != nil {
-				tt.remoteConn.Close()
-			}
-			close(tt.quitBySelf)
-			tt.br.clearTCPConnTrack(tt.id)
-			return
+			markActive()
 
 		case <-tt.quitByOther:
 			// who closes this channel should be responsible to clear track map
@@ -736,10 +748,6 @@ func (tt *tcpConnTrack) run() {
 				tt.remoteConn.Close()
 			}
 			return
-		}
-		timeout.Stop()
-		if ackTimer != nil {
-			ackTimer.Stop()
 		}
 	}
 }
