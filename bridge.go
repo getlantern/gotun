@@ -35,20 +35,22 @@ type Bridge interface {
 }
 
 type bridge struct {
-	dev            io.ReadWriteCloser
-	dialTCP        func(ctx context.Context, network, addr string) (net.Conn, error)
-	dialUDP        func(ctx context.Context, network, addr string) (*net.UDPConn, error)
-	mtu            int
-	idleTimeout    time.Duration
-	ipFragments    map[uint16]*ipPacket
-	writes         chan interface{}
-	buffers        *bpool.BytePool
-	udpPacketPool  *sync.Pool
-	tcpConnTrack   map[string]*tcpConnTrack
-	tcpConnTrackMx sync.Mutex
-	udpConnTrack   map[fourtuple]*udpConnTrack
-	udpConnTrackMx sync.Mutex
-	stopCh         chan bool
+	acceptedPackets int64
+	rejectedPackets int64
+	dev             io.ReadWriteCloser
+	dialTCP         func(ctx context.Context, network, addr string) (net.Conn, error)
+	dialUDP         func(ctx context.Context, network, addr string) (*net.UDPConn, error)
+	mtu             int
+	idleTimeout     time.Duration
+	ipFragments     map[uint16]*ipPacket
+	writes          chan interface{}
+	buffers         *bpool.BytePool
+	udpPacketPool   *sync.Pool
+	tcpConnTrack    map[string]*tcpConnTrack
+	tcpConnTrackMx  sync.Mutex
+	udpConnTrack    map[fourtuple]*udpConnTrack
+	udpConnTrackMx  sync.Mutex
+	stopCh          chan bool
 }
 
 // NewBridge creates a new bridge on the given TUN device. Once a bridge is
@@ -162,6 +164,7 @@ func (br *bridge) read(doneWriting <-chan interface{}) error {
 				continue
 			}
 			br.onTCPPacket(data, &ip, &tcp)
+			br.acceptedPacket()
 
 		case packet.IPProtocolUDP:
 			err = packet.ParseUDP(ip.Payload, &udp)
@@ -170,10 +173,12 @@ func (br *bridge) read(doneWriting <-chan interface{}) error {
 				continue
 			}
 			br.onUDPPacket(&ip, &udp)
+			br.acceptedPacket()
 
 		default:
 			// Unsupported packets
-			log.Errorf("Unsupported packet: protocol %d", ip.Protocol)
+			// log.Errorf("Unsupported packet: protocol %d", ip.Protocol)
+			br.rejectedPacket()
 		}
 	}
 }
