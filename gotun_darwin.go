@@ -25,8 +25,9 @@ type sockaddrCtl struct {
 }
 
 type utunDev struct {
-	f *os.File
+	stopped int64
 
+	f      *os.File
 	addr   string
 	addrIP net.IP
 	gw     string
@@ -34,8 +35,6 @@ type utunDev struct {
 
 	rBuf [2048]byte
 	wBuf [2048]byte
-
-	stopped int64
 }
 
 func (dev *utunDev) Read(data []byte) (int, error) {

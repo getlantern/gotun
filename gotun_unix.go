@@ -30,13 +30,13 @@ func NewTunDev(file *os.File, addr string, gw string) TUNDevice {
 }
 
 type tunDev struct {
+	stopped int64
 	name    string
 	addr    string
 	addrIP  net.IP
 	gw      string
 	gwIP    net.IP
 	f       *os.File
-	stopped int64
 }
 
 func (dev *tunDev) Read(data []byte) (int, error) {

@@ -250,6 +250,7 @@ func OpenTunDevice(name, addr, gw, mask string, dns []string) (TUNDevice, error)
 }
 
 type winTapDev struct {
+	stopped     int64
 	fd          windows.Handle
 	addr        string
 	addrIP      net.IP
@@ -260,7 +261,6 @@ type winTapDev struct {
 	wInitiated  bool
 	rOverlapped windows.Overlapped
 	wOverlapped windows.Overlapped
-	stopped     int64
 }
 
 func newWinTapDev(fd windows.Handle, addr string, gw string) *winTapDev {
