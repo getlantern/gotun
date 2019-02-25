@@ -137,6 +137,9 @@ func (br *bridge) read(doneWriting <-chan interface{}) error {
 				log.Debug("bridge received stop signal")
 				return nil
 			}
+			if err == io.EOF {
+				return nil
+			}
 			return log.Errorf("error reading packet: %v", err)
 		}
 		data := buf[:n]
