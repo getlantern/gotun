@@ -149,7 +149,7 @@ func getTuntapComponentId() (string, error) {
 	return "", errors.New("not found component id")
 }
 
-func OpenTunDevice(name, addr, gw, mask string, dns []string) (TUNDevice, error) {
+func OpenTunDevice(name, addr, gw, mask string, dns []string) (io.ReadWriteCloser, error) {
 	componentId, err := getTuntapComponentId()
 	if err != nil {
 		return nil, err
@@ -250,7 +250,6 @@ func OpenTunDevice(name, addr, gw, mask string, dns []string) (TUNDevice, error)
 }
 
 type winTapDev struct {
-	stopped     int64
 	fd          windows.Handle
 	addr        string
 	addrIP      net.IP
@@ -261,6 +260,8 @@ type winTapDev struct {
 	wInitiated  bool
 	rOverlapped windows.Overlapped
 	wOverlapped windows.Overlapped
+
+	baseDevice
 }
 
 func newWinTapDev(fd windows.Handle, addr string, gw string) *winTapDev {
@@ -293,7 +294,9 @@ func (dev *winTapDev) Read(data []byte) (int, error) {
 
 		err := windows.ReadFile(dev.fd, dev.rBuf[:], &done, &dev.rOverlapped)
 		if err != nil {
-			if err != windows.ERROR_IO_PENDING {
+			if dev.isClosed() {
+				err = io.EOF
+			} else if err != windows.ERROR_IO_PENDING {
 				return 0, err
 			} else {
 				windows.WaitForSingleObject(dev.rOverlapped.HEvent, windows.INFINITE)
@@ -306,10 +309,6 @@ func (dev *winTapDev) Read(data []byte) (int, error) {
 			nr = int(done)
 		}
 		if nr > 14 {
-			if isStopMarker(dev.rBuf[14:nr], dev.addrIP, dev.gwIP) {
-				return 0, errStopMarkerReceived
-			}
-
 			// discard IPv6 packets
 			if dev.rBuf[14]&0xf0 == 0x60 {
 				log.Debug("ipv6 packet")
@@ -368,14 +367,9 @@ func getOverlappedResult(h windows.Handle, overlapped *windows.Overlapped) (int,
 	return n, nil
 }
 
-func (dev *winTapDev) Stop() error {
-	if atomic.CompareAndSwapInt64(&dev.stopped, 0, 1) {
-		sendStopMarker(dev.addr, dev.gw)
-		return nil
-	}
-	return errAlreadyStopped
-}
-
 func (dev *winTapDev) Close() error {
-	return windows.Close(dev.fd)
+	if atomic.CompareAndSwapInt64(&dev.closed, 0, 1) {
+		return windows.Close(dev.fd)
+	}
+	return errAlreadyClosed
 }

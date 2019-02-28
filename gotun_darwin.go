@@ -2,6 +2,7 @@ package tun
 
 import (
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -25,9 +26,8 @@ type sockaddrCtl struct {
 }
 
 type utunDev struct {
-	stopped int64
+	closed int64
 
-	f      *os.File
 	addr   string
 	addrIP net.IP
 	gw     string
@@ -35,18 +35,20 @@ type utunDev struct {
 
 	rBuf [2048]byte
 	wBuf [2048]byte
+
+	baseDevice
 }
 
 func (dev *utunDev) Read(data []byte) (int, error) {
-	n, e := dev.f.Read(dev.rBuf[:])
+	n, err := dev.f.Read(dev.rBuf[:])
 	if n > 0 {
-		if e == nil && isStopMarker(dev.rBuf[4:n], dev.addrIP, dev.gwIP) {
-			return 0, errStopMarkerReceived
-		}
 		copy(data, dev.rBuf[4:n])
 		n -= 4
 	}
-	return n, e
+	if err != nil && dev.isClosed() {
+		err = io.EOF
+	}
+	return n, err
 }
 
 // one packet, no more than MTU
@@ -57,7 +59,7 @@ func (dev *utunDev) Write(data []byte) (int, error) {
 
 var sockaddrCtlSize uintptr = 32
 
-func OpenTunDevice(name, addr, gw, mask string) (TUNDevice, error) {
+func OpenTunDevice(name, addr, gw, mask string) (io.ReadWriteCloser, error) {
 	fd, err := OpenAndRegisterTunDevice(name, addr, gw, mask)
 	if err != nil {
 		return nil, err
@@ -108,14 +110,16 @@ func OpenAndRegisterTunDevice(name, addr, gw, mask string) (int, error) {
 	return fd, nil
 }
 
-func WrapTunDevice(fd int, addr, gw string) (TUNDevice, error) {
+func WrapTunDevice(fd int, addr, gw string) (io.ReadWriteCloser, error) {
 	ifName, err := getInterfaceName(fd)
 	if err != nil {
 		return nil, err
 	}
 
 	dev := &utunDev{
-		f:      os.NewFile(uintptr(fd), ifName),
+		baseDevice: baseDevice{
+			f: os.NewFile(uintptr(fd), ifName),
+		},
 		addr:   addr,
 		addrIP: net.ParseIP(addr),
 		gw:     gw,
@@ -141,14 +145,9 @@ func getInterfaceName(fd int) (string, error) {
 	return string(ifName.name[:ifNameSize-1]), nil
 }
 
-func (dev *utunDev) Stop() error {
-	if atomic.CompareAndSwapInt64(&dev.stopped, 0, 1) {
-		sendStopMarker(dev.addr, dev.gw)
-		return nil
-	}
-	return errAlreadyStopped
-}
-
 func (dev *utunDev) Close() error {
-	return dev.f.Close()
+	if atomic.CompareAndSwapInt64(&dev.closed, 0, 1) {
+		return syscall.Close(int(dev.f.Fd()))
+	}
+	return errAlreadyClosed
 }
