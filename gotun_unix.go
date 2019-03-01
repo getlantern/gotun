@@ -33,7 +33,6 @@ func newTunDev(file *os.File, addr string, gw string) io.ReadWriteCloser {
 }
 
 type tunDev struct {
-	closed int64
 	name   string
 	addr   string
 	addrIP net.IP
@@ -56,8 +55,7 @@ func (dev *tunDev) Write(data []byte) (int, error) {
 }
 
 func (dev *tunDev) Close() error {
-	if atomic.CompareAndSwapInt64(&dev.closed, 0, 1) {
+	return dev.closeIfNecessary(func() error {
 		return syscall.Close(int(dev.f.Fd()))
 	}
-	return errAlreadyClosed
 }

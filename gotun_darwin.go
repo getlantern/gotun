@@ -6,7 +6,6 @@ import (
 	"net"
 	"os"
 	"os/exec"
-	"sync/atomic"
 	"syscall"
 	"unsafe"
 )
@@ -26,8 +25,6 @@ type sockaddrCtl struct {
 }
 
 type utunDev struct {
-	closed int64
-
 	addr   string
 	addrIP net.IP
 	gw     string
@@ -146,8 +143,7 @@ func getInterfaceName(fd int) (string, error) {
 }
 
 func (dev *utunDev) Close() error {
-	if atomic.CompareAndSwapInt64(&dev.closed, 0, 1) {
+	return dev.closeIfNecessary(func() error {
 		return syscall.Close(int(dev.f.Fd()))
-	}
-	return errAlreadyClosed
+	})
 }

@@ -368,8 +368,7 @@ func getOverlappedResult(h windows.Handle, overlapped *windows.Overlapped) (int,
 }
 
 func (dev *winTapDev) Close() error {
-	if atomic.CompareAndSwapInt64(&dev.closed, 0, 1) {
+	return dev.closeIfNecessary(func() error {
 		return windows.Close(dev.fd)
 	}
-	return errAlreadyClosed
 }
