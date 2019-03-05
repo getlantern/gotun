@@ -50,8 +50,9 @@ func (dev *utunDev) Read(data []byte) (int, error) {
 
 // one packet, no more than MTU
 func (dev *utunDev) Write(data []byte) (int, error) {
-	n := copy(dev.wBuf[4:], data)
-	return dev.f.Write(dev.wBuf[:n+4])
+	_n := copy(dev.wBuf[4:], data)
+	n, err := dev.f.Write(dev.wBuf[:_n+4])
+	return n - 4, err
 }
 
 var sockaddrCtlSize uintptr = 32
