@@ -6,7 +6,6 @@ import (
 	"io"
 	"net"
 	"os"
-	"sync/atomic"
 	"syscall"
 )
 
@@ -57,5 +56,5 @@ func (dev *tunDev) Write(data []byte) (int, error) {
 func (dev *tunDev) Close() error {
 	return dev.closeIfNecessary(func() error {
 		return syscall.Close(int(dev.f.Fd()))
-	}
+	})
 }
