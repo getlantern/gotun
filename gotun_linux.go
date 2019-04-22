@@ -19,7 +19,7 @@ type ifReq struct {
 	pad   [0x28 - 0x10 - 2]byte
 }
 
-func OpenTunDevice(name, addr, gw, mask string, dns []string) (TUNDevice, error) {
+func OpenTunDevice(name, addr, gw, mask string) (TUNDevice, error) {
 	file, err := os.OpenFile("/dev/net/tun", os.O_RDWR, 0)
 	if err != nil {
 		return nil, err
