@@ -1,6 +1,7 @@
 package tun
 
 import (
+	"io"
 	"os"
 	"os/exec"
 	"syscall"
@@ -19,7 +20,7 @@ type ifReq struct {
 	pad   [0x28 - 0x10 - 2]byte
 }
 
-func OpenTunDevice(name, addr, gw, mask string) (TUNDevice, error) {
+func OpenTunDevice(name, addr, gw, mask string) (io.ReadWriteCloser, error) {
 	file, err := os.OpenFile("/dev/net/tun", os.O_RDWR, 0)
 	if err != nil {
 		return nil, err
@@ -27,7 +28,7 @@ func OpenTunDevice(name, addr, gw, mask string) (TUNDevice, error) {
 	var req ifReq
 	copy(req.Name[:], name)
 	req.Flags = IFF_TUN | IFF_NO_PI
-	log.Debug("openning tun device")
+	log.Debug("opening tun device")
 	_, _, errno := syscall.Syscall(syscall.SYS_IOCTL, file.Fd(), uintptr(syscall.TUNSETIFF), uintptr(unsafe.Pointer(&req)))
 	if errno != 0 {
 		err = errno
@@ -44,5 +45,5 @@ func OpenTunDevice(name, addr, gw, mask string) (TUNDevice, error) {
 		return nil, err
 	}
 
-	return NewTunDev(file, addr, gw), nil
+	return newTunDev(file, addr, gw), nil
 }
