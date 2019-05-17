@@ -1,36 +1,38 @@
 package tun
 
 import (
-	"fmt"
-	"io"
-	"time"
+	"errors"
+	"net"
+	"os"
+	"sync/atomic"
 
 	"github.com/getlantern/golog"
 )
 
-const (
-	defaultMTU              = 1500
-	defaultWriteBufferDepth = 10000
-	defaultBufferPoolDepth  = 1000
-	defaultIdleTimeout      = 5 * time.Minute
-)
-
 var (
 	log = golog.LoggerFor("gotun")
+
+	errAlreadyClosed = errors.New("already closed")
 )
 
-type fourtuple struct {
-	localIP, remoteIP     string
-	localPort, remotePort uint16
+type baseDevice struct {
+	closed int64
+
+	f *os.File
 }
 
-func (ft fourtuple) String() string {
-	return fmt.Sprintf("%v:%v -> %v:%v", ft.localIP, ft.localPort, ft.remoteIP, ft.remotePort)
+func (dev *baseDevice) isClosed() bool {
+	return atomic.LoadInt64(&dev.closed) == 1
 }
 
-type TUNDevice interface {
-	io.ReadWriteCloser
+func (dev *baseDevice) closeIfNecessary(closer func() error) error {
+	err := errAlreadyClosed
+	if atomic.CompareAndSwapInt64(&dev.closed, 0, 1) {
+		err = closer()
+	}
+	return err
+}
 
-	// Stop sends the stop signal to this TUN device
-	Stop() error
+func parseIPv4(ip string) net.IP {
+	return net.ParseIP(ip).To4()
 }
