@@ -6,8 +6,13 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"strconv"
 	"syscall"
 	"unsafe"
+)
+
+const (
+	bufSize = MaximumIPPacketSize + 4
 )
 
 const (
@@ -30,8 +35,8 @@ type utunDev struct {
 	gw     string
 	gwIP   net.IP
 
-	rBuf [2048]byte
-	wBuf [2048]byte
+	rBuf [bufSize]byte
+	wBuf [bufSize]byte
 
 	baseDevice
 }
@@ -57,8 +62,8 @@ func (dev *utunDev) Write(data []byte) (int, error) {
 
 var sockaddrCtlSize uintptr = 32
 
-func OpenTunDevice(name, addr, gw, mask string) (io.ReadWriteCloser, error) {
-	fd, err := OpenAndRegisterTunDevice(name, addr, gw, mask)
+func OpenTunDevice(name, addr, gw, mask string, mtu int) (io.ReadWriteCloser, error) {
+	fd, err := OpenAndRegisterTunDevice(name, addr, gw, mask, mtu)
 	if err != nil {
 		return nil, err
 	}
@@ -66,7 +71,7 @@ func OpenTunDevice(name, addr, gw, mask string) (io.ReadWriteCloser, error) {
 	return WrapTunDevice(fd, addr, gw)
 }
 
-func OpenAndRegisterTunDevice(name, addr, gw, mask string) (int, error) {
+func OpenAndRegisterTunDevice(name, addr, gw, mask string, mtu int) (int, error) {
 	fd, err := syscall.Socket(syscall.AF_SYSTEM, syscall.SOCK_DGRAM, 2)
 	if err != nil {
 		return 0, err
@@ -98,7 +103,7 @@ func OpenAndRegisterTunDevice(name, addr, gw, mask string) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	cmd := exec.Command("ifconfig", ifName, "inet", addr, gw, "netmask", mask, "mtu", "1500", "up")
+	cmd := exec.Command("ifconfig", ifName, "inet", addr, gw, "netmask", mask, "mtu", strconv.Itoa(mtu), "up")
 	err = cmd.Run()
 	if err != nil {
 		syscall.Close(fd)

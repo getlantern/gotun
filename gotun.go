@@ -9,6 +9,11 @@ import (
 	"github.com/getlantern/golog"
 )
 
+const (
+	// MaximumIPPacketSize is 65535 bytes
+	MaximumIPPacketSize = 65535
+)
+
 var (
 	log = golog.LoggerFor("gotun")
 
