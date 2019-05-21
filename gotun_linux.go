@@ -4,6 +4,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strconv"
 	"syscall"
 	"unsafe"
 )
@@ -20,7 +21,7 @@ type ifReq struct {
 	pad   [0x28 - 0x10 - 2]byte
 }
 
-func OpenTunDevice(name, addr, gw, mask string) (io.ReadWriteCloser, error) {
+func OpenTunDevice(name, addr, gw, mask string, mtu int) (io.ReadWriteCloser, error) {
 	file, err := os.OpenFile("/dev/net/tun", os.O_RDWR, 0)
 	if err != nil {
 		return nil, err
@@ -37,7 +38,7 @@ func OpenTunDevice(name, addr, gw, mask string) (io.ReadWriteCloser, error) {
 
 	// config address
 	log.Debug("configuring tun device address")
-	cmd := exec.Command("ifconfig", name, addr, "netmask", mask, "mtu", "1500")
+	cmd := exec.Command("ifconfig", name, addr, "netmask", mask, "mtu", strconv.Itoa(mtu))
 	err = cmd.Run()
 	if err != nil {
 		file.Close()
