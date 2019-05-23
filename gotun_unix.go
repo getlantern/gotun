@@ -6,7 +6,6 @@ import (
 	"io"
 	"net"
 	"os"
-	"syscall"
 )
 
 func WrapTunDevice(fd int, addr, gw string) (io.ReadWriteCloser, error) {
@@ -14,7 +13,6 @@ func WrapTunDevice(fd int, addr, gw string) (io.ReadWriteCloser, error) {
 }
 
 func newTunDev(file *os.File, addr string, gw string) io.ReadWriteCloser {
-	syscall.SetNonblock(int(file.Fd()), false)
 	dev := &tunDev{
 		baseDevice: baseDevice{
 			f: file,
@@ -55,6 +53,6 @@ func (dev *tunDev) Write(data []byte) (int, error) {
 
 func (dev *tunDev) Close() error {
 	return dev.closeIfNecessary(func() error {
-		return syscall.Close(int(dev.f.Fd()))
+		return dev.f.Close()
 	})
 }
